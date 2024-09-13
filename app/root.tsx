@@ -1,25 +1,132 @@
 import {
-  Links,
-  Meta,
-  Outlet,
-  Scripts,
-  ScrollRestoration,
+    Links,
+    Meta,
+    Outlet,
+    Scripts,
+    ScrollRestoration,
+    isRouteErrorResponse,
+    useRouteError,
 } from "@remix-run/react";
+import "./tailwind.css";
+
+import {ThemeProvider} from '~/components/ThemeContext/ThemeContext';
+import {json, LinksFunction} from "@remix-run/node";
+import Header from "~/components/Header/Header";
+import {getUserIdFromSession} from "~/server/authData";
+import {getUserById} from "~/server/dataBaseData";
+import {User} from "~/types";
+import {HoneypotProvider} from "remix-utils/honeypot/react";
+import {useLoaderData, useMatches} from "react-router";
+import React from "react";
+import {themeCookie} from "~/server/themeCookie";
+import {honeypot} from "~/server/Honeypot";
+import {getUserImage} from "~/components/getUserImage";
+
+export const links: LinksFunction = () => {
+    return [{rel: "stylesheet", href: "/app/index.css"}];
+};
+
+
+const getOSTheme = () => {
+    if (typeof window !== 'undefined') {
+        const prefersDarkScheme = window.matchMedia("(prefers-color-scheme: dark)");
+        return prefersDarkScheme.matches ? "dark" : "light";
+    }
+    return "light";
+};
+
+
+export function Layout({children}: { children: React.ReactNode }) {
+    const matches = useMatches();
+    const disableJS = matches.some(match => match.handle?.disableJS);
+    const data = useLoaderData();
+    const honeypotInputProps = data?.honeypotInputProps ?? {};
+
+    return (
+
+        <html lang="en">
+        <head>
+            <meta charSet="utf-8"/>
+            <meta name="viewport" content="width=device-width, initial-scale=1"/>
+            <Meta/>
+            <Links/>
+            <title> remix</title>
+        </head>
+        <body>
+
+        <HoneypotProvider {...honeypotInputProps}>
+            <ThemeProvider>
+                <Header/>
+                <div>
+                    {children}
+                </div>
+            </ThemeProvider>
+        </HoneypotProvider>
+
+        <ScrollRestoration/>
+        {!disableJS && <Scripts/>}
+        </body>
+        </html>
+    );
+
+}
+
+export function ErrorBoundary() {
+    const error = useRouteError();
+
+
+    if (isRouteErrorResponse(error)) {
+        return (
+            <div className="bg-blue-200 p-8 rounded-lg shadow-lg mt-[40px]  text-center">
+                <h1>
+                    {error.status} {error.statusText}
+                </h1>
+                <p>{error.data}</p>
+            </div>
+        )
+    } else if (error instanceof Error) {
+        return (
+            <div className="bg-blue-200 p-8 rounded-lg shadow-lg   text-center">
+                <h1>Error</h1>
+                <p>{error.message}</p>
+                <p>The stack trace is:</p>
+            </div>
+        );
+    } else {
+        return <h1>Unknown Error</h1>;
+    }
+}
 
 export default function App() {
-  return (
-    <html lang="en">
-      <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <Meta />
-        <Links />
-      </head>
-      <body>
-        <Outlet />
-        <ScrollRestoration />
-        <Scripts />
-      </body>
-    </html>
-  );
+    return <Outlet/>;
+}
+
+
+export async function loader({request}) {
+    const userId = await getUserIdFromSession(request);
+    console.log(userId)
+    const user = await getUserById(userId) as User
+    if (user) {
+        user.image = getUserImage(user)
+    }
+    const cookieHeader = request.headers.get("Cookie");
+    const theme = (await themeCookie.parse(cookieHeader)) || getOSTheme();
+
+
+    return json({user, theme, honeypotInputProps: honeypot.getInputProps()})
+}
+
+export async function action({request}) {
+    const formData = await request.formData();
+    const newTheme = formData.get("theme") as string;
+
+    const cookieHeader = await themeCookie.serialize(newTheme);
+    return json(
+        {success: true},
+        {
+            headers: {
+                "Set-Cookie": cookieHeader,
+            },
+        }
+    );
 }
